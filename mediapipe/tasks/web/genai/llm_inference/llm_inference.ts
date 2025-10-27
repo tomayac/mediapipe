@@ -410,7 +410,7 @@ export class LlmInference extends TaskRunner {
 
     let modelStream: ReadableStreamDefaultReader<Uint8Array> | undefined;
     if (options.baseOptions?.modelAssetPath) {
-      const request = await fetch(
+      const request = await fetch( 
         options.baseOptions.modelAssetPath.toString(),
       );
       if (!request.ok) {

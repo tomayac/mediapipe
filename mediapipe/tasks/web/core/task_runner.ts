@@ -87,6 +87,62 @@ export async function createTaskRunner<T extends TaskRunner>(
   return instance;
 }
 
+/**
+ * Get the SHA-256 hash for Hugging Face resources as per
+ * https://huggingface.co/docs/hub/en/storage-backends#xet.
+ */
+export async function getFileHashFromHuggingFace(url: URL) {
+  if (/\/resolve\//.test(url.pathname)) {
+    const rawUrl = url.toString().replace(/\/resolve\//, "/raw/");
+    const text = await fetch(rawUrl).then((response) => response.text());
+    if (!text.includes("oid sha256:")) {
+      return null;
+    }
+    return text.replace(/.*?\n^oid sha256:(\w+)\n.*?$/gm, "$1").trim() || null;
+  }
+  return null;
+}
+
+/**
+ * Checks if Cross-Origin Storage is supported.
+ */
+export function supportsCrossOriginStorage() {
+  const supported = typeof navigator !== "undefined" && "crossOriginStorage" in navigator;
+  console.log(`Cross-Origin Storage is ${supported ? 'supported' : 'not supported'}.`);
+  return supported;
+}
+
+/**
+ * Try to load a Hugging Face resource from Cross-Origin Storage by first
+ * retrieving the resource's SHA-256 hash from Hugging Face and then checking
+ * if a resource with this hash is found in Cross-Origin Storage.
+ */
+export async function loadResourceFromCrossOriginStorage(model: URL) {
+  let hashValue;
+  try {
+    hashValue = await getFileHashFromHuggingFace(model);
+    if (hashValue) {
+      const hash = {
+        value: hashValue,
+        algorithm: 'SHA-256',
+      }
+      // @ts-expect-error This is injected by an extension.
+      const [handle] = await navigator.crossOriginStorage.requestFileHandles([hash]);
+      const blob = await handle.getFile();
+      console.log(`Resource with hash "${hashValue}" found in Cross-Origin Storage.`);
+      return blob;
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'NotAllowedError') {
+      console.warn('Access to Cross-Origin Storage not allowed.');
+    }
+    if (error instanceof Error && error.name === 'NotFoundError') {
+      console.warn(`Resource with hash "${hashValue}" not found in Cross-Origin Storage.`);
+    }
+    throw error;
+  }
+}
+
 /** Base class for all MediaPipe Tasks. */
 export abstract class TaskRunner {
   protected abstract baseOptions: BaseOptionsProto;
@@ -157,21 +213,43 @@ export abstract class TaskRunner {
         );
       }
 
-      this.setAcceleration(baseOptions);
+      this.setAcceleration(baseOptions);      
       if (baseOptions.modelAssetPath) {
         // We don't use `await` here since we want to apply most settings
         // synchronously.
-        return fetch(baseOptions.modelAssetPath.toString())
-          .then((response) => {
-            if (!response.ok) {
-              throw new Error(
-                `Failed to fetch model: ${baseOptions.modelAssetPath} (${response.status})`,
-              );
-            } else {
-              return response.arrayBuffer();
+        (async () => {
+          const modelURL = new URL(baseOptions.modelAssetPath as string);
+          if (supportsCrossOriginStorage() && modelURL.origin === 'https://huggingface.co') {
+            try {
+              const blob = await loadResourceFromCrossOriginStorage(modelURL);
+              return new Uint8Array(await blob.arrayBuffer());
+            } catch {
+              // Either the model wasn't found in Cross-Origin Storage or the user
+              // denied access to Cross-Origin Storage.
+              return fetch(baseOptions.modelAssetPath.toString())
+              .then((response) => {
+                if (!response.ok) {
+                  throw new Error(
+                    `Failed to fetch model: ${baseOptions.modelAssetPath} (${response.status})`,
+                  );
+                } else {
+                  return response.arrayBuffer();
+                }
+              }); 
             }
-          })
-          .then((buffer) => {
+          } else {
+            return fetch(baseOptions.modelAssetPath.toString())
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to fetch model: ${baseOptions.modelAssetPath} (${response.status})`,
+                );
+              } else {
+                return response.arrayBuffer();
+              }
+            }); 
+          }
+        })().then((buffer) => {
             try {
               // Try to delete file as we cannot overwrite an existing file
               // using our current API.
@@ -210,7 +288,7 @@ export abstract class TaskRunner {
     return Promise.resolve();
   }
 
-  /** Appliest the current options to the MediaPipe graph. */
+  /** Applies the current options to the MediaPipe graph. */
   protected abstract refreshGraph(): void;
 
   /**
