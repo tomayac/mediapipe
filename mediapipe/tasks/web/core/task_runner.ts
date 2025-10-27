@@ -146,7 +146,7 @@ export async function loadResourceFromCrossOriginStorage(model: URL) {
 /**
  * Returns the hash object of the shape `{value, algorithm}` for a blob.
  */
-async function getBlobHash (blob: Blob) {
+export async function getBlobHash (blob: Blob) {
   const hashAlgorithmIdentifier = "SHA-256";
   // Get the contents of the blob as binary data contained in an ArrayBuffer.
   const arrayBuffer = await blob.arrayBuffer();
@@ -170,7 +170,7 @@ async function getBlobHash (blob: Blob) {
  * Stores a resource in Cross-Origin Storage.
  * @param blob
  */
-async function storeResourceInCrossOriginStorage(blob: Blob) {
+export async function storeResourceInCrossOriginStorage(blob: Blob) {
   let hash;
   try {
     hash = await getBlobHash(blob);
