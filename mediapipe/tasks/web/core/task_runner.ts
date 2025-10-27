@@ -143,6 +143,51 @@ export async function loadResourceFromCrossOriginStorage(model: URL) {
   }
 }
 
+/**
+ * Returns the hash object of the shape `{value, algorithm}` for a blob.
+ */
+async function getBlobHash (blob: Blob) {
+  const hashAlgorithmIdentifier = "SHA-256";
+  // Get the contents of the blob as binary data contained in an ArrayBuffer.
+  const arrayBuffer = await blob.arrayBuffer();
+  // Hash the arrayBuffer using SHA-256.
+  const hashBuffer = await crypto.subtle.digest(
+    hashAlgorithmIdentifier,
+    arrayBuffer,
+  );
+  // Convert the ArrayBuffer to a hex string.
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return {
+    algorithm: hashAlgorithmIdentifier,
+    value: hashHex,
+  };
+}
+
+/**
+ * Stores a resource in Cross-Origin Storage.
+ * @param blob
+ */
+async function storeResourceInCrossOriginStorage(blob: Blob) {
+  let hash;
+  try {
+    hash = await getBlobHash(blob);
+    // @ts-expect-error Injected by an extension.
+    const [handle] = await navigator.crossOriginStorage.requestFileHandles(
+      [hash],
+      { create: true },
+    );
+    const writableStream = await handle.createWritable();
+    await writableStream.write(blob);
+    await writableStream.close();
+    console.log(`Resource with hash "${hash.value}" stored in Cross-Origin Storage.`);
+  } catch (error) {
+    console.warn(`Storing of resource with hash "${hash}" failed.`, error);
+  }
+}
+
 /** Base class for all MediaPipe Tasks. */
 export abstract class TaskRunner {
   protected abstract baseOptions: BaseOptionsProto;
@@ -213,8 +258,8 @@ export abstract class TaskRunner {
         );
       }
 
-      this.setAcceleration(baseOptions);      
-      if (baseOptions.modelAssetPath) {
+      this.setAcceleration(baseOptions);
+      if (baseOptions.modelAssetPath && typeof baseOptions.modelAssetPath === 'string') {
         // We don't use `await` here since we want to apply most settings
         // synchronously.
         (async () => {
@@ -226,19 +271,22 @@ export abstract class TaskRunner {
             } catch {
               // Either the model wasn't found in Cross-Origin Storage or the user
               // denied access to Cross-Origin Storage.
-              return fetch(baseOptions.modelAssetPath.toString())
+              return fetch((baseOptions.modelAssetPath as string).toString())
               .then((response) => {
                 if (!response.ok) {
                   throw new Error(
                     `Failed to fetch model: ${baseOptions.modelAssetPath} (${response.status})`,
                   );
                 } else {
+                  response.clone().blob().then(async (blob) => {
+                    storeResourceInCrossOriginStorage(blob);
+                  });
                   return response.arrayBuffer();
                 }
-              }); 
+              });
             }
           } else {
-            return fetch(baseOptions.modelAssetPath.toString())
+            return fetch((baseOptions.modelAssetPath as string).toString())
             .then((response) => {
               if (!response.ok) {
                 throw new Error(
@@ -247,7 +295,7 @@ export abstract class TaskRunner {
               } else {
                 return response.arrayBuffer();
               }
-            }); 
+            });
           }
         })().then((buffer) => {
             try {
