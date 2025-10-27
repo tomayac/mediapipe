@@ -259,7 +259,7 @@ export abstract class TaskRunner {
       }
 
       this.setAcceleration(baseOptions);
-      if (baseOptions.modelAssetPath && typeof baseOptions.modelAssetPath === 'string') {
+      if (baseOptions.modelAssetPath) {
         // We don't use `await` here since we want to apply most settings
         // synchronously.
         (async () => {
