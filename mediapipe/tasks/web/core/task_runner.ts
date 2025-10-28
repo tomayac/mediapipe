@@ -146,10 +146,8 @@ export async function loadResourceFromCrossOriginStorage(model: URL) {
 /**
  * Returns the hash object of the shape `{value, algorithm}` for a blob.
  */
-export async function getBlobHash (blob: Blob) {
-  const hashAlgorithmIdentifier = "SHA-256";
-  // Get the contents of the blob as binary data contained in an ArrayBuffer.
-  const arrayBuffer = await blob.arrayBuffer();
+export async function getResourceHash (arrayBuffer: ArrayBuffer) {
+  const hashAlgorithmIdentifier = "SHA-256";  
   // Hash the arrayBuffer using SHA-256.
   const hashBuffer = await crypto.subtle.digest(
     hashAlgorithmIdentifier,
@@ -168,23 +166,23 @@ export async function getBlobHash (blob: Blob) {
 
 /**
  * Stores a resource in Cross-Origin Storage.
- * @param blob
+ * @param arrayBuffer
  */
-export async function storeResourceInCrossOriginStorage(blob: Blob) {
+export async function storeResourceInCrossOriginStorage(arrayBuffer: ArrayBuffer) {
   let hash;
   try {
-    hash = await getBlobHash(blob);
+    hash = await getResourceHash(arrayBuffer);
     // @ts-expect-error Injected by an extension.
     const [handle] = await navigator.crossOriginStorage.requestFileHandles(
       [hash],
       { create: true },
     );
     const writableStream = await handle.createWritable();
-    await writableStream.write(blob);
+    await writableStream.write(arrayBuffer);
     await writableStream.close();
     console.log(`Resource with hash "${hash.value}" stored in Cross-Origin Storage.`);
   } catch (error) {
-    console.warn(`Storing of resource with hash "${hash}" failed.`, error);
+    console.warn(`Storing of resource with hash "${hash?.value || 'unknown'}" failed.`, error);
   }
 }
 
@@ -277,12 +275,11 @@ export abstract class TaskRunner {
                   throw new Error(
                     `Failed to fetch model: ${baseOptions.modelAssetPath} (${response.status})`,
                   );
-                } else {
-                  response.clone().blob().then(async (blob) => {
-                    storeResourceInCrossOriginStorage(blob);
-                  });
-                  return response.arrayBuffer();
                 }
+                return response.arrayBuffer().then((arrayBuffer) => {
+                  storeResourceInCrossOriginStorage(arrayBuffer);
+                  return arrayBuffer;
+                });
               });
             }
           } else {
