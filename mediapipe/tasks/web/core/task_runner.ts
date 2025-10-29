@@ -277,7 +277,11 @@ export abstract class TaskRunner {
                   );
                 }
                 return response.arrayBuffer().then((arrayBuffer) => {
-                  storeResourceInCrossOriginStorage(arrayBuffer);
+                  try {
+                    storeResourceInCrossOriginStorage(arrayBuffer);
+                  } catch {
+                    // No op.
+                  }
                   return arrayBuffer;
                 });
               });

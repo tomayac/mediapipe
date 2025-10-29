@@ -23,6 +23,9 @@ import {BaseOptions as BaseOptionsProto} from '../../../../tasks/cc/core/proto/b
 import {
   CachedGraphRunner,
   TaskRunner,
+  supportsCrossOriginStorage,
+  loadResourceFromCrossOriginStorage,
+  storeResourceInCrossOriginStorage,
 } from '../../../../tasks/web/core/task_runner';
 import {WasmFileset} from '../../../../tasks/web/core/wasm_fileset';
 import {LlmInferenceGraphOptions} from '../../../../tasks/web/genai/llm_inference/proto/llm_inference_graph_options_pb';
@@ -410,20 +413,53 @@ export class LlmInference extends TaskRunner {
 
     let modelStream: ReadableStreamDefaultReader<Uint8Array> | undefined;
     if (options.baseOptions?.modelAssetPath) {
-      const request = await fetch( 
-        options.baseOptions.modelAssetPath.toString(),
-      );
-      if (!request.ok) {
-        throw new Error(
-          `Failed to fetch model: ${options.baseOptions.modelAssetPath} (${request.status})`,
-        );
-      }
-      if (!request.body) {
-        throw new Error(
-          `Failed to fetch model: ${options.baseOptions.modelAssetPath} (no body)`,
-        );
-      }
-      modelStream = request.body.getReader();
+      modelStream = await (async () => {
+        const modelURL = new URL(options.baseOptions?.modelAssetPath as string);
+        if (supportsCrossOriginStorage() && modelURL.origin === 'https://huggingface.co') {
+          try {
+            const blob = await loadResourceFromCrossOriginStorage(modelURL);
+            return blob.stream();
+          } catch {
+            // Either the model wasn't found in Cross-Origin Storage or the user
+            // denied access to Cross-Origin Storage.
+            const response = await fetch( 
+        (options.baseOptions?.modelAssetPath as string).toString(),
+            );
+            if (!response.ok) {
+              throw new Error(
+        `Failed to fetch model: ${options.baseOptions?.modelAssetPath} (${response.status})`,
+              );
+            }
+            if (!response.body) {
+              throw new Error(
+        `Failed to fetch model: ${options.baseOptions?.modelAssetPath} (no body)`,
+              );
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            try {
+              storeResourceInCrossOriginStorage(arrayBuffer);
+            } catch {
+              // No op.
+            }
+            return new Blob([arrayBuffer]).stream();
+          }
+        } else {     
+          const response = await fetch( 
+      (options.baseOptions?.modelAssetPath as string).toString(),
+          );
+          if (!response.ok) {
+            throw new Error(
+          `Failed to fetch model: ${options.baseOptions?.modelAssetPath} (${response.status})`,
+            );
+          }
+          if (!response.body) {
+            throw new Error(
+          `Failed to fetch model: ${options.baseOptions?.modelAssetPath} (no body)`,
+            );
+          }
+          return response.body.getReader();
+        }
+      })();
     } else if (options.baseOptions?.modelAssetBuffer instanceof Uint8Array) {
       modelStream = uint8ArrayToStream(
         options.baseOptions.modelAssetBuffer,
