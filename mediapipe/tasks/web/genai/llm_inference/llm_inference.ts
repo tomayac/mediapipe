@@ -435,13 +435,16 @@ export class LlmInference extends TaskRunner {
         `Failed to fetch model: ${options.baseOptions?.modelAssetPath} (no body)`,
               );
             }
-            const arrayBuffer = await response.arrayBuffer();
-            try {
-              storeResourceInCrossOriginStorage(arrayBuffer);
-            } catch {
-              // No op.
-            }
-            return new Blob([arrayBuffer]).stream();
+            const [streamForStorage, streamForReturn] = response.body.tee();
+            (async () => {
+              try {
+                const arrayBuffer = await new Response(streamForStorage).arrayBuffer();
+                storeResourceInCrossOriginStorage(arrayBuffer);
+              } catch {
+                // No op
+              }
+            })();
+            return streamForReturn;
           }
         } else {     
           const response = await fetch( 
